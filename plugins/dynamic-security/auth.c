@@ -207,3 +207,35 @@ int dynsec_auth__basic_auth_callback(int event, void *event_data, void *userdata
 		return MOSQ_ERR_PLUGIN_DEFER;
 	}
 }
+
+
+int dynsec_auth__psk_key_callback(int event, void *event_data, void *userdata)
+{
+	struct mosquitto_evt_psk_key *ed = event_data;
+	struct dynsec__client *client;
+	const char *clientid;
+
+	UNUSED(event);
+	UNUSED(userdata);
+
+	client = dynsec_clients__find(ed->identity);
+	if(client){
+		if(client->disabled){
+			return MOSQ_ERR_AUTH;
+		}
+		if(client->clientid){
+			clientid = mosquitto_client_id(ed->client);
+			if(clientid == NULL || strcmp(client->clientid, clientid)){
+				return MOSQ_ERR_AUTH;
+			}
+		}
+		if(client->psk == NULL){
+			return MOSQ_ERR_AUTH;
+		}else{
+			strncpy(ed->key, client->psk, (size_t)ed->max_key_len);
+			return MOSQ_ERR_SUCCESS;
+		}
+	}else{
+		return MOSQ_ERR_PLUGIN_DEFER;
+	}
+}

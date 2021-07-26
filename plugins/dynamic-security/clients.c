@@ -86,6 +86,7 @@ static void client__free_item(struct dynsec__client *client)
 	mosquitto_free(client->text_description);
 	mosquitto_free(client->clientid);
 	mosquitto_free(client->username);
+	mosquitto_free(client->psk);
 	mosquitto_free(client);
 }
 
@@ -226,6 +227,20 @@ int dynsec_clients__config_load(cJSON *tree)
 				}
 			}
 
+			/* Pre-Shared Key */
+			jtmp = cJSON_GetObjectItem(j_client, "psk");
+			if(jtmp != NULL && cJSON_IsString(jtmp)){
+				client->psk = mosquitto_strdup(jtmp->valuestring);
+				if(client->psk == NULL){
+					mosquitto_free(client->text_description);
+					mosquitto_free(client->text_name);
+					mosquitto_free(client->clientid);
+					mosquitto_free(client->username);
+					mosquitto_free(client);
+					continue;
+				}
+			}
+
 			/* Roles */
 			j_roles = cJSON_GetObjectItem(j_client, "roles");
 			if(j_roles && cJSON_IsArray(j_roles)){
@@ -266,6 +281,7 @@ static int dynsec__config_add_clients(cJSON *j_clients)
 				|| (client->text_name && cJSON_AddStringToObject(j_client, "textname", client->text_name) == NULL)
 				|| (client->text_description && cJSON_AddStringToObject(j_client, "textdescription", client->text_description) == NULL)
 				|| (client->disabled && cJSON_AddBoolToObject(j_client, "disabled", true) == NULL)
+				|| (client->psk && cJSON_AddStringToObject(j_client, "psk", client->psk) == NULL)
 				){
 
 			return 1;
@@ -322,7 +338,7 @@ int dynsec_clients__config_save(cJSON *tree)
 
 int dynsec_clients__process_create(cJSON *j_responses, struct mosquitto *context, cJSON *command, char *correlation_data)
 {
-	char *username, *password, *clientid = NULL;
+	char *username, *password, *psk, *clientid = NULL;
 	char *text_name, *text_description;
 	struct dynsec__client *client;
 	int rc;
@@ -341,6 +357,11 @@ int dynsec_clients__process_create(cJSON *j_responses, struct mosquitto *context
 
 	if(json_get_string(command, "password", &password, true) != MOSQ_ERR_SUCCESS){
 		dynsec__command_reply(j_responses, context, "createClient", "Invalid/missing password", correlation_data);
+		return MOSQ_ERR_INVAL;
+	}
+
+	if(json_get_string(command, "psk", &psk, true) != MOSQ_ERR_SUCCESS){
+		dynsec__command_reply(j_responses, context, "createClient", "Invalid/missing pre-shared-key", correlation_data);
 		return MOSQ_ERR_INVAL;
 	}
 
@@ -406,6 +427,16 @@ int dynsec_clients__process_create(cJSON *j_responses, struct mosquitto *context
 		}
 		client->pw.valid = true;
 	}
+
+	if(psk){
+		client->psk = mosquitto_strdup(psk);
+		if(client->psk == NULL){
+			dynsec__command_reply(j_responses, context, "createClient", "Internal error", correlation_data);
+			client__free_item(client);
+			return MOSQ_ERR_NOMEM;
+		}
+	}
+
 	if(clientid && strlen(clientid) > 0){
 		client->clientid = mosquitto_strdup(clientid);
 		if(client->clientid == NULL){
@@ -722,6 +753,7 @@ int dynsec_clients__process_modify(cJSON *j_responses, struct mosquitto *context
 	char *username;
 	char *clientid;
 	char *password;
+	char *psk;
 	char *text_name, *text_description;
 	struct dynsec__client *client;
 	struct dynsec__rolelist *rolelist = NULL;
@@ -770,6 +802,17 @@ int dynsec_clients__process_modify(cJSON *j_responses, struct mosquitto *context
 				return MOSQ_ERR_NOMEM;
 			}
 		}
+	}
+
+	if(json_get_string(command, "psk", &psk, false) == MOSQ_ERR_SUCCESS){
+		str = mosquitto_strdup(psk);
+		if (str == NULL){
+			dynsec__command_reply(j_responses, context, "modifyClient", "Internal error", correlation_data);
+			mosquitto_kick_client_by_username(username, false);
+			return MOSQ_ERR_NOMEM;
+		}
+        mosquitto_free(client->psk);
+        client->psk = str;
 	}
 
 	if(json_get_string(command, "textname", &text_name, false) == MOSQ_ERR_SUCCESS){
